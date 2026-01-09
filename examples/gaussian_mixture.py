@@ -21,8 +21,7 @@ potential = GaussianMixturePotential(means=means, sigma=0.2)
 config = HMCConfig(
     initial_step_size=0.1,
     max_path_len=50,
-    warmup_steps=100,
-    iterations=20_000,
+    iterations=10000,
     initial_precm=jnp.eye(potential.dim),
     key=key,
 )
@@ -43,7 +42,7 @@ samples.block_until_ready()
 e = time.monotonic_ns()
 print("Time taken with JIT:", (e - s) / 1e9)
 
-warmup = 5000
+warmup = min(5000, int(config.iterations * 0.1))
 samples = samples[warmup:]
 samples = samples.reshape(-1, 2)
 # We then plot the samples

@@ -18,7 +18,6 @@ potential = GaussianPotential(mu=mu)
 config = HMCConfig(
     initial_step_size=0.1,
     max_path_len=2,
-    warmup_steps=100,
     iterations=20000,
     initial_precm=jnp.eye(potential.dim),
     key=key,
