@@ -46,3 +46,21 @@ samples = samples.reshape(-1, 2) # (num_chains * num_samples, dim)
 
 ```
 ![Gaussian Samples](./examples/gaussian_samples.png)
+
+If we change
+
+```py
+potential = GaussianPotential(mu=mu)
+```
+
+by 
+
+```
+potential = GaussianMixturePotential(means=means, sigma=0.2)
+```
+
+we obtain:
+
+![Gaussian Mixture Samples](./examples/gaussian_mixture_samples.png)
+
+See [examples/gaussian_mixture.py](./examples/gaussian_mixture.py).

@@ -58,9 +58,12 @@ samples.block_until_ready()
 e = time.monotonic_ns()
 print("Time taken with JIT:", (e - s) / 1e9)  # ~ 30% speed up
 
+warmup = 2000
+samples = samples[warmup:]
 samples = samples.reshape(-1, 2)
 # We then plot the samples
-plt.scatter(samples[:, 0], samples[:, 1])
+plt.figure(figsize=(6, 6))
+plt.scatter(samples[warmup:, 0], samples[warmup:, 1])
 plt.scatter([mu[0]], [mu[1]], color="red", marker="x", label="Mean")
 plt.legend()
 plt.savefig("examples/gaussian_samples.png")

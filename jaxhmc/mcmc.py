@@ -9,15 +9,13 @@ from jaxhmc.integrators import leapfrog
 from jaxhmc.potentials import Potential
 
 
-def sample_gaussian_from_precision(batch_size: int, dim: int, precision: jax.Array, key: jax.Array):
-    # We first compute the Cholesky decomposition of the precision matrix
-    L = jnp.linalg.cholesky(precision)
+def sample_gaussian_from_precision(batch_size: int, dim: int, precm_L: jax.Array, key: jax.Array):
     # Then we sample from a standard normal distribution and transform it
     key, subkey = jax.random.split(key, 2)
     z = jax.random.normal(subkey, shape=(batch_size, dim))
 
     # We have x = L^{-T}z, so L^{T}x = z
-    x = jnp.linalg.solve(L.T[None, ...], z[..., None])
+    x = jnp.linalg.solve(precm_L.T[None, ...], z[..., None])
     x = x.squeeze(-1)
     return x, key
 
@@ -40,6 +38,7 @@ def mh(
     potential: Potential,
     potential_grad: nnx.Module,
     precm: jax.Array,
+    precm_L: jax.Array,
     step_size: int,
     steps: int,
     batch_size: int,
@@ -49,7 +48,7 @@ def mh(
     p, key = sample_gaussian_from_precision(
         batch_size,
         potential.dim,
-        precm,
+        precm_L,
         key,
     )
 
@@ -88,16 +87,22 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     # and (ii) Metropolis correction. We also update the
     # step size with Robbins-Monro's dual averaging algorithm.
 
-    potential_grad = jax.vmap(jax.grad(potential), in_axes=0)
+    pot_grad_vmap = jax.vmap(jax.grad(potential), in_axes=0)
+    pot_vmap = jax.vmap(potential, in_axes=0)
+
     step_size = config.initial_step_size
+
+    # We first compute the Cholesky decomposition of the precision matrix
+    Lp = jnp.linalg.cholesky(config.initial_precm)
 
     _, (p, q) = jax.lax.scan(
         f=partial(
             mh,
-            potential=potential,
-            potential_grad=potential_grad,
+            potential=pot_vmap,
+            potential_grad=pot_grad_vmap,
             step_size=step_size,
             precm=config.initial_precm,
+            precm_L=Lp,
             steps=config.max_path_len // step_size,
             batch_size=initial_position.shape[0],
         ),
