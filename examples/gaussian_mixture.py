@@ -21,11 +21,10 @@ potential = GaussianMixturePotential(means=means, sigma=0.28)
 config = HMCConfig(
     initial_step_size=0.2,
     max_path_len=2,
-    iterations=100_000,
-    initial_precm=0.5 * jnp.eye(dim),
+    iterations=400_000,
+    initial_precm=jnp.eye(dim),
     key=key,
 )
-
 
 s = time.monotonic_ns()
 momenta, samples = hmc(
@@ -42,7 +41,7 @@ samples = samples[warmup:]
 samples = samples.reshape(-1, 2)
 # We then plot the samples
 
-plt.scatter(samples[warmup:, 0], samples[warmup:, 1], alpha=0.6)
+plt.scatter(samples[:, 0], samples[:, 1], alpha=0.6)
 plt.scatter(means[:, 0], means[:, 1], color="red", marker="x", label="Mean")
 plt.legend()
 plt.savefig("examples/gaussian_mixture_samples.png")
