@@ -22,7 +22,7 @@ def sample_gaussian_from_precision(batch_size: int, dim: int, precm_L: jax.Array
 
 @struct.dataclass
 class HMCConfig:
-    initial_step_size: int = struct.field(pytree_node=False)  # We update with dual averaging
+    initial_step_size: float = struct.field(pytree_node=False)  # We update with dual averaging
     max_path_len: int = struct.field(pytree_node=False)  # We use jittering
 
     iterations: int = struct.field(pytree_node=False)
@@ -65,8 +65,8 @@ def mh_step(
     )
 
     # Compute the Hamiltonian
-    def hamiltonian(p, q):
-        return pot_vmap(q) + 0.5 * jnp.einsum("bi, ij, bj->b", p, precm, p)
+    def hamiltonian(p_st, q_st):
+        return pot_vmap(q_st) + 0.5 * jnp.einsum("bi, ij, bj->b", p_st, precm, p_st)
 
     H = hamiltonian(p, q)
     H_new = hamiltonian(p_new, q_new)
@@ -80,7 +80,7 @@ def mh_step(
     b = b[..., None]
 
     # We only make the move if b = 1
-    p_next = jnp.where(b == 1, p_new, q)
+    p_next = jnp.where(b == 1, p_new, p)
     q_next = jnp.where(b == 1, q_new, q)
 
     nesterov_state = jax.lax.cond(
