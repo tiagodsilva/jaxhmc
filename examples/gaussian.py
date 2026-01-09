@@ -43,10 +43,9 @@ print("Time taken without JIT:", (e - s) / 1e9)
 
 
 # We then JIT the sampler.
-hmc_jit = jax.jit(hmc)
 
 s = time.monotonic_ns()
-momenta, samples = hmc_jit(
+momenta, samples = hmc(
     potential=potential,
     initial_position=initial_position,
     config=config,
@@ -60,6 +59,7 @@ print("Time taken with JIT:", (e - s) / 1e9)  # ~ 30% speed up
 warmup = 2000
 samples = samples[warmup:]
 samples = samples.reshape(-1, 2)
+
 # We then plot the samples
 plt.figure(figsize=(6, 6))
 plt.scatter(samples[warmup:, 0], samples[warmup:, 1])

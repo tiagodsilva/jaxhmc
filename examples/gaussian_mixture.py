@@ -17,28 +17,23 @@ dim = initial_position.shape[1]
 # We the run the HMC
 means = jnp.vstack([jnp.ones(dim) + 2, jnp.ones(dim), jnp.ones(dim) - 2])
 
-potential = GaussianMixturePotential(means=means, sigma=0.2)
+potential = GaussianMixturePotential(means=means, sigma=0.28)
 config = HMCConfig(
-    initial_step_size=0.1,
-    max_path_len=50,
-    iterations=10000,
-    initial_precm=jnp.eye(potential.dim),
+    initial_step_size=0.2,
+    max_path_len=2,
+    iterations=100_000,
+    initial_precm=jnp.eye(dim),
     key=key,
 )
 
 
-# We then JIT the sampler.
-hmc_jit = jax.jit(hmc)
-
 s = time.monotonic_ns()
-momenta, samples = hmc_jit(
+momenta, samples = hmc(
     potential=potential,
     initial_position=initial_position,
     config=config,
 )
 
-momenta.block_until_ready()
-samples.block_until_ready()
 e = time.monotonic_ns()
 print("Time taken with JIT:", (e - s) / 1e9)
 

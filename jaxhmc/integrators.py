@@ -8,8 +8,8 @@ import jax.numpy as jnp
 
 
 def _step(
-    carry: tuple[jax.Array, jax.Array],
     _,
+    carry: tuple[jax.Array, jax.Array],
     precm: jax.Array,
     potential_grad: nnx.Module,
     step_size: float,
@@ -18,7 +18,7 @@ def _step(
     p = p - 0.5 * step_size * potential_grad(q)  # (B, d)
     q = q + step_size * jnp.einsum("ij, bi->bj", precm, p)  # (B, d)
     p = p - 0.5 * step_size * potential_grad(q)  # (B, d)
-    return (p, q), None
+    return p, q
 
 
 def leapfrog(
@@ -29,15 +29,16 @@ def leapfrog(
     step_size: float,
     steps: int,
 ):
-    (p, q), _ = jax.lax.scan(
-        partial(
+    p, q = jax.lax.fori_loop(
+        lower=0,
+        upper=steps,
+        body_fun=partial(
             _step,
             precm=precm,
             step_size=step_size,
             potential_grad=potential_grad,
         ),
-        init=(p, q),
-        length=steps,
+        init_val=(p, q),
     )
     return p, q
 

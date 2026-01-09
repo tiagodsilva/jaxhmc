@@ -31,23 +31,26 @@ class HMCConfig:
     initial_precm: jax.Array
     key: jax.Array
 
+    tuning_steps: int = struct.field(pytree_node=False, default=1000)
 
-def mh(
+
+def mh_step(
     carry: tuple[jax.Array, jax.Array, NesterovState],
     _,
-    potential: Potential,
-    potential_grad: nnx.Module,
+    pot_vmap: callable,
+    pot_grad_vmap: callable,
     precm: jax.Array,
     precm_L: jax.Array,
     steps: int,
     batch_size: int,
     nesterov_config: NesterovConfig,
+    tuning: bool,
 ):
     q, key, nesterov_state = carry
 
     p, key = sample_gaussian_from_precision(
         batch_size,
-        potential.dim,
+        q.shape[1],
         precm_L,
         key,
     )
@@ -57,14 +60,17 @@ def mh(
         p,
         q,
         precm,
-        potential_grad,
+        pot_grad_vmap,
         steps=steps,
         step_size=nesterov_state.step_size,
     )
 
     # Compute the Hamiltonian
-    H = potential(q) + jnp.einsum("bi, ij, bj->b", p, precm, p)
-    H_new = potential(q_new) + jnp.einsum("bi, ij, bj->b", p_new, precm, p_new)
+    def hamiltonian(p, q):
+        return pot_vmap(q) + 0.5 * jnp.einsum("bi, ij, bj->b", p, precm, p)
+
+    H = hamiltonian(p, q)
+    H_new = hamiltonian(p_new, q_new)
 
     # Compute the MH correction step
     alpha = jnp.minimum(1.0, jnp.exp(H - H_new))
@@ -75,28 +81,61 @@ def mh(
     b = b[..., None]
 
     # We only make the move if b = 1
-    p_next = b * p_new + (1 - b) * p
-    q_next = b * q_new + (1 - b) * q
+    p_next = jnp.where(b == 1, p_new, q)
+    q_next = jnp.where(b == 1, q_new, q)
 
-    nesterov_state = nesterov_dual_averaging(
-        nesterov_state,
-        jnp.mean(alpha),
-        nesterov_config,
+    nesterov_state = jax.lax.cond(
+        tuning,
+        lambda: nesterov_dual_averaging(
+            nesterov_state,
+            jnp.mean(alpha),
+            nesterov_config,
+        ),
+        lambda: nesterov_state,
     )
 
     return (q_next, key, nesterov_state), (p_next, q_next)
 
 
+def run_chain(
+    pot_vmap: callable,
+    pot_grad_vmap: callable,
+    config: HMCConfig,
+    precm_L: jax.Array,
+    initial_position: jax.Array,
+    nesterov_config: NesterovConfig,
+    nesterov_state: NesterovState,
+    steps: int,
+    key: jax.Array,
+    length: int,
+    tuning: bool,
+):
+    return jax.lax.scan(
+        f=partial(
+            mh_step,
+            pot_vmap=pot_vmap,
+            pot_grad_vmap=pot_grad_vmap,
+            precm=config.initial_precm,
+            precm_L=precm_L,
+            steps=steps,
+            batch_size=initial_position.shape[0],
+            nesterov_config=nesterov_config,
+            tuning=tuning,
+        ),
+        init=(initial_position, key, nesterov_state),
+        length=length,
+    )
+
+
+@partial(jax.jit, static_argnames=("verbose",))
 def hmc(
     potential: Potential,
     initial_position: jax.Array,
     config: HMCConfig,
-    tuning_steps: int = 1000,
+    verbose: bool = False,
 ):
     pot_grad_vmap = jax.vmap(jax.grad(potential), in_axes=0)
     pot_vmap = jax.vmap(potential, in_axes=0)
-
-    step_size = config.initial_step_size
 
     # We first compute the Cholesky decomposition of the precision matrix
     precm_L = jnp.linalg.cholesky(config.initial_precm)
@@ -104,22 +143,50 @@ def hmc(
     nesterov_state = NesterovState(step_size=config.initial_step_size)
     nesterov_config = NesterovConfig(
         mu=jnp.log(10 * config.initial_step_size),
-        tuning_steps=tuning_steps,
     )
 
-    _, (p, q) = jax.lax.scan(
-        f=partial(
-            mh,
-            potential=pot_vmap,
-            potential_grad=pot_grad_vmap,
-            precm=config.initial_precm,
-            precm_L=precm_L,
-            steps=config.max_path_len // step_size,
-            batch_size=initial_position.shape[0],
-            nesterov_config=nesterov_config,
-        ),
-        init=(initial_position, config.key, nesterov_state),
-        length=config.iterations + tuning_steps,
+    if verbose:
+        print("Tuning...")
+    # First step: Tuning.
+    # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
+    steps = jnp.floor(config.max_path_len / config.initial_step_size).astype(jnp.int32)
+    (q, key, nesterov_state), _ = run_chain(
+        pot_vmap=pot_vmap,
+        pot_grad_vmap=pot_grad_vmap,
+        steps=steps,
+        initial_position=initial_position,
+        key=config.key,
+        precm_L=precm_L,
+        config=config,
+        nesterov_state=nesterov_state,
+        nesterov_config=nesterov_config,
+        length=config.tuning_steps,
+        tuning=True,
     )
 
-    return p[tuning_steps:], q[tuning_steps:]
+    nesterov_state = nesterov_state.replace(
+        step_size=jnp.exp(nesterov_state.running_avg),
+    )
+
+    if verbose:
+        print("Sampling...")
+    # Second step: Sampling.
+    # We fix the step size with the value encountered above.
+
+    steps = jnp.floor(config.max_path_len / nesterov_state.step_size).astype(int)
+
+    _, (p, q) = run_chain(
+        pot_vmap=pot_vmap,
+        pot_grad_vmap=pot_grad_vmap,
+        precm_L=precm_L,
+        steps=steps,
+        key=key,
+        initial_position=q,
+        config=config,
+        nesterov_config=nesterov_config,
+        nesterov_state=nesterov_state,
+        length=config.iterations,
+        tuning=False,
+    )
+
+    return p, q

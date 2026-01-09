@@ -7,28 +7,35 @@ import jax.numpy as jnp
 class NesterovState:
     running_avg: jax.Array = 0.0
     error: jax.Array = 0.0
-    step_size: jax.Array = 0.0
+    step_size: jax.Array = 1.0
     t: jax.Array = 1
 
 
 @struct.dataclass
 class NesterovConfig:
     mu: jax.Array
-    tuning_steps: int = struct.field(pytree_node=False)
 
     goal: float = struct.field(pytree_node=False, default=0.8)
     gamma: float = struct.field(pytree_node=False, default=0.05)
     to: float = struct.field(pytree_node=False, default=10)
     kappa: float = struct.field(pytree_node=False, default=0.75)
 
-    min_step_size: float = struct.field(pytree_node=False, default=1e-3)
+    log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-3))
+    log_max_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e1))
 
 
 def _step(carry: NesterovState, pa: float, config: NesterovConfig):
     error = carry.error + config.goal - pa
     log_step = config.mu - error / (jnp.sqrt(carry.t) * config.gamma)
-    eta = (carry.t + config.to) ** -config.kappa  # This avoids attributing excessive weight to initial iterations
+    log_step = jnp.clip(
+        log_step,
+        min=config.log_min_step_size,
+        max=config.log_max_step_size,
+    )
+
+    eta = (carry.t + config.to) ** (-config.kappa)  # This avoids attributing excessive weight to initial iterations
     running_avg = (1 - eta) * carry.running_avg + eta * log_step
+
     return NesterovState(
         running_avg=running_avg,
         error=error,
@@ -42,9 +49,4 @@ def nesterov_dual_averaging(
     pa: jax.Array,
     config: NesterovConfig,
 ):
-    should_tune = carry.t < config.tuning_steps
-    return jax.lax.cond(
-        should_tune,
-        lambda: _step(carry, pa, config),
-        lambda: carry.replace(step_size=jnp.exp(carry.running_avg), t=carry.t + 1),
-    )
+    return _step(carry, pa, config)
