@@ -41,5 +41,8 @@ momenta, samples = hmc_jit(
     initial_position=initial_position,
     config=config,
 )
+
+samples = samples.reshape(-1, 2) # (num_chains * num_samples, dim)
+
 ```
 ![Gaussian Samples](./examples/gaussian_samples.png)
