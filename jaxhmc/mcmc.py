@@ -41,6 +41,7 @@ def hmc_step(
     precm: jax.Array,
     precm_L: jax.Array,
     steps: int,
+    max_steps: int,
     batch_size: int,
     nesterov_config: NesterovConfig,
     tuning: bool,
@@ -61,6 +62,7 @@ def hmc_step(
         precm,
         pot_grad_vmap,
         steps=steps,
+        max_steps=max_steps,
         step_size=nesterov_state.step_size,
     )
 
@@ -105,6 +107,7 @@ def run_hmc_chain(
     nesterov_config: NesterovConfig,
     nesterov_state: NesterovState,
     steps: int,
+    max_steps: int,
     key: jax.Array,
     length: int,
     tuning: bool,
@@ -117,6 +120,7 @@ def run_hmc_chain(
             precm=config.initial_precm,
             precm_L=precm_L,
             steps=steps,
+            max_steps=max_steps,
             batch_size=initial_position.shape[0],
             nesterov_config=nesterov_config,
             tuning=tuning,
@@ -141,11 +145,14 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
 
     # First step: Tuning.
     # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
+    max_steps = jnp.floor(config.max_path_len / jnp.exp(nesterov_config.log_min_step_size)).astype(jnp.int32)
     steps = jnp.floor(config.max_path_len / config.initial_step_size).astype(jnp.int32)
+
     (q, key, nesterov_state), _ = run_hmc_chain(
         pot_vmap=pot_vmap,
         pot_grad_vmap=pot_grad_vmap,
         steps=steps,
+        max_steps=max_steps,
         initial_position=initial_position,
         key=config.key,
         precm_L=precm_L,
@@ -170,6 +177,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
         pot_grad_vmap=pot_grad_vmap,
         precm_L=precm_L,
         steps=steps,
+        max_steps=steps,
         key=key,
         initial_position=q,
         config=config,

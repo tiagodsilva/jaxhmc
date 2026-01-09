@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from jaxhmc.mcmc import HMCConfig, RandomWalkConfig, hmc, random_walk
 from jaxhmc.potentials import GaussianMixturePotential
 
-SAMPLES = 200_000
+SAMPLES = 1_000_000
 
 # We first sample a initial position
 key = jax.random.key(42)
@@ -17,7 +17,7 @@ dim = initial_position.shape[1]
 # We the run the HMC
 means = jnp.vstack([jnp.ones(dim) + 2, jnp.ones(dim), jnp.ones(dim) - 2])
 
-potential = GaussianMixturePotential(means=means, sigma=0.3)
+potential = GaussianMixturePotential(means=means, sigma=0.25)
 config = HMCConfig(
     initial_step_size=0.2,
     max_path_len=2,
