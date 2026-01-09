@@ -55,7 +55,7 @@ potential = GaussianPotential(mu=mu)
 
 by 
 
-```
+```py
 potential = GaussianMixturePotential(means=means, sigma=0.2)
 ```
 
