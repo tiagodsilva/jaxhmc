@@ -93,7 +93,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     step_size = config.initial_step_size
 
     # We first compute the Cholesky decomposition of the precision matrix
-    Lp = jnp.linalg.cholesky(config.initial_precm)
+    precm_L = jnp.linalg.cholesky(config.initial_precm)
 
     _, (p, q) = jax.lax.scan(
         f=partial(
@@ -102,7 +102,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
             potential_grad=pot_grad_vmap,
             step_size=step_size,
             precm=config.initial_precm,
-            precm_L=Lp,
+            precm_L=precm_L,
             steps=config.max_path_len // step_size,
             batch_size=initial_position.shape[0],
         ),
