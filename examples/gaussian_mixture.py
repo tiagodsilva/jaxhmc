@@ -22,7 +22,7 @@ config = HMCConfig(
     initial_step_size=0.2,
     max_path_len=2,
     iterations=100_000,
-    initial_precm=jnp.eye(dim),
+    initial_precm=0.5 * jnp.eye(dim),
     key=key,
 )
 

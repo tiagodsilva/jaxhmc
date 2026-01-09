@@ -127,13 +127,8 @@ def run_chain(
     )
 
 
-@partial(jax.jit, static_argnames=("verbose",))
-def hmc(
-    potential: Potential,
-    initial_position: jax.Array,
-    config: HMCConfig,
-    verbose: bool = False,
-):
+@jax.jit
+def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     pot_grad_vmap = jax.vmap(jax.grad(potential), in_axes=0)
     pot_vmap = jax.vmap(potential, in_axes=0)
 
@@ -145,8 +140,6 @@ def hmc(
         mu=jnp.log(10 * config.initial_step_size),
     )
 
-    if verbose:
-        print("Tuning...")
     # First step: Tuning.
     # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
     steps = jnp.floor(config.max_path_len / config.initial_step_size).astype(jnp.int32)
@@ -168,8 +161,6 @@ def hmc(
         step_size=jnp.exp(nesterov_state.running_avg),
     )
 
-    if verbose:
-        print("Sampling...")
     # Second step: Sampling.
     # We fix the step size with the value encountered above.
 
