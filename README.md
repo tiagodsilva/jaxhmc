@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from jaxhmc.mcmc import HMCConfig, hmc
 from jaxhmc.potentials import GaussianPotential
 
-# We first sample a initial position
+# We first sample an initial position
 key = jax.random.key(42)
 key, subkey = jax.random.split(key, 2)
 initial_position = jax.random.uniform(subkey, (16, 2))
