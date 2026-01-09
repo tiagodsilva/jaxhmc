@@ -33,7 +33,7 @@ class HMCConfig:
     tuning_steps: int = struct.field(pytree_node=False, default=1000)
 
 
-def mh_step(
+def hmc_step(
     carry: tuple[jax.Array, jax.Array, NesterovState],
     _,
     pot_vmap: callable,
@@ -96,7 +96,7 @@ def mh_step(
     return (q_next, key, nesterov_state), (p_next, q_next)
 
 
-def run_chain(
+def run_hmc_chain(
     pot_vmap: callable,
     pot_grad_vmap: callable,
     config: HMCConfig,
@@ -111,7 +111,7 @@ def run_chain(
 ):
     return jax.lax.scan(
         f=partial(
-            mh_step,
+            hmc_step,
             pot_vmap=pot_vmap,
             pot_grad_vmap=pot_grad_vmap,
             precm=config.initial_precm,
@@ -142,7 +142,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     # First step: Tuning.
     # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
     steps = jnp.floor(config.max_path_len / config.initial_step_size).astype(jnp.int32)
-    (q, key, nesterov_state), _ = run_chain(
+    (q, key, nesterov_state), _ = run_hmc_chain(
         pot_vmap=pot_vmap,
         pot_grad_vmap=pot_grad_vmap,
         steps=steps,
@@ -165,7 +165,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
 
     steps = jnp.floor(config.max_path_len / nesterov_state.step_size).astype(int)
 
-    _, (p, q) = run_chain(
+    _, (p, q) = run_hmc_chain(
         pot_vmap=pot_vmap,
         pot_grad_vmap=pot_grad_vmap,
         precm_L=precm_L,
@@ -180,3 +180,93 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     )
 
     return p, q
+
+
+@struct.dataclass
+class RandomWalkConfig:
+    key: jax.Array
+
+    iterations: int = struct.field(pytree_node=False)
+    tuning_steps: int = struct.field(pytree_node=False, default=1000)
+
+    initial_step_size: float = 0.1
+
+
+def random_walk_step(
+    carry: tuple[jax.Array, jax.Array, NesterovState],
+    _,
+    pot_vmap: Potential,
+    batch_size: int,
+    nesterov_config: NesterovConfig,
+    tuning: bool = False,
+):
+    position, key, nesterov_state = carry
+
+    key, subkey = jax.random.split(key, 2)
+    noise = jax.random.normal(subkey, position.shape)
+    new_position = position + nesterov_state.step_size * noise
+
+    # Since it is symmetric, the MH probability is the ratio of the potential energies
+    alpha = jnp.minimum(1.0, jnp.exp(pot_vmap(position) - pot_vmap(new_position)))
+    key, subkey = jax.random.split(key, 2)
+    b = jax.random.bernoulli(subkey, p=alpha, shape=(batch_size,))[..., None]
+
+    new_position = jnp.where(b == 1, new_position, position)
+
+    # Update the step size via Nesterov dual averaging only if we are in the tuning phase
+    nesterov_state = jax.lax.cond(
+        tuning,
+        lambda: nesterov_dual_averaging(
+            nesterov_state,
+            jnp.mean(alpha),
+            nesterov_config,
+        ),
+        lambda: nesterov_state,
+    )
+
+    return (new_position, key, nesterov_state), new_position
+
+
+def random_walk(potential: Potential, initial_position: jax.Array, config: RandomWalkConfig):
+    nesterov_state = NesterovState(step_size=config.initial_step_size)
+    nesterov_config = NesterovConfig(
+        mu=jnp.log(10 * config.initial_step_size),
+    )
+
+    pot_vmap = jax.vmap(potential, in_axes=0)
+    batch_size = initial_position.shape[0]
+
+    # First step: Tuning.
+    # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
+    (position, key, nesterov_state), _ = jax.lax.scan(
+        f=partial(
+            random_walk_step,
+            pot_vmap=pot_vmap,
+            batch_size=batch_size,
+            nesterov_config=nesterov_config,
+            tuning=True,
+        ),
+        init=(initial_position, config.key, nesterov_state),
+        length=config.tuning_steps,
+    )
+
+    nesterov_state = nesterov_state.replace(
+        step_size=jnp.exp(nesterov_state.running_avg),
+    )
+
+    # Second step: Sampling.
+    # We fix the step size with the value encountered above.
+
+    _, samples = jax.lax.scan(
+        f=partial(
+            random_walk_step,
+            pot_vmap=pot_vmap,
+            batch_size=batch_size,
+            nesterov_config=nesterov_config,
+            tuning=True,
+        ),
+        init=(position, key, nesterov_state),
+        length=config.iterations,
+    )
+
+    return samples
