@@ -61,5 +61,7 @@ print("Time taken with JIT:", (e - s) / 1e9)  # ~ 30% speed up
 samples = samples.reshape(-1, 2)
 # We then plot the samples
 plt.scatter(samples[:, 0], samples[:, 1])
-plt.scatter([mu[0]], [mu[1]], color="red", marker="x")
+plt.scatter([mu[0]], [mu[1]], color="red", marker="x", label="Mean")
+plt.legend()
+plt.savefig("examples/gaussian_samples.png")
 plt.show()
