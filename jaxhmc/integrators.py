@@ -20,7 +20,7 @@ def _step(
     def integrate():
         p, q = carry  # (B, d)
         p = p - 0.5 * step_size * potential_grad(q)  # (B, d)
-        q = q + step_size * jnp.einsum("ij, bi->bj", precm, p)  # (B, d)
+        q = q + step_size * jnp.einsum("ij,bi->bj", precm, p)  # (B, d)
         p = p - 0.5 * step_size * potential_grad(q)  # (B, d)
         return p, q
 
