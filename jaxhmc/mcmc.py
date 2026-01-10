@@ -44,7 +44,7 @@ class HMCConfig:
 def hmc_step(
     q: jax.Array,
     key: jax.Array,
-    # For tuning
+    # For online tuning
     nesterov_state: NesterovState,
     welford_state: WelfordState,
     *,
@@ -54,7 +54,7 @@ def hmc_step(
     precm_L: jax.Array,
     steps: int,
     max_steps: int,
-    # For tuning
+    # For tuning (static)
     nesterov_config: NesterovConfig,
     step_size_tuning: bool,
     momentum_tuning: bool,
@@ -268,7 +268,6 @@ def init_states(config: HMCConfig, precm_L: jax.Array):
 def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     pot_grad_vmap = jax.vmap(jax.grad(potential), in_axes=0)
     pot_vmap = jax.vmap(potential, in_axes=0)
-    _, d = initial_position.shape
 
     # We first compute the Cholesky decomposition of the precision matrix
     precm_L = jnp.linalg.cholesky(config.initial_precm)

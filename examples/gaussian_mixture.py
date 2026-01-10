@@ -17,12 +17,12 @@ initial_position = jax.random.uniform(subkey, (16, 2))
 dim = initial_position.shape[1]
 
 # We the run the HMC
-means = jnp.vstack([jnp.ones(dim) + 2, jnp.ones(dim), jnp.ones(dim) - 2])
+means = 2 * jnp.vstack([jnp.ones(dim) + 2, jnp.ones(dim), jnp.ones(dim) - 2, jnp.array([-1, 3]), jnp.array([3, -1])])
 
-potential = GaussianMixturePotential(means=means, sigma=0.2)
+potential = GaussianMixturePotential(means=means, sigma=0.5)
 config = HMCConfig(
-    initial_step_size=0.1,
-    max_path_len=1,
+    initial_step_size=0.2,
+    max_path_len=2,
     iterations=SAMPLES,
     initial_precm=jnp.eye(dim),
     key=key,
