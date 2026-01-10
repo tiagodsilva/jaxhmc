@@ -95,6 +95,7 @@ def welford_step(welford_state: WelfordState, q: jax.Array):
     L_batched = jnp.broadcast_to(L, (B, d, d))
     L_new, _ = jax.lax.fori_loop(0, d, cholesky_step, (L_batched, v))
 
+    # Arbitrary. Ensure common matrix for the chains.
     L_new = L_new.mean(axis=0)
     mu_new = mu_new.mean(axis=0)
 
