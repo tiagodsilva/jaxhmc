@@ -58,52 +58,56 @@ class WelfordState:
     L: jax.Array
     C: jax.Array
     mu: jax.Array
-
     size: jax.Array
 
 
 def cholesky_step(k: int, carry: tuple[jax.Array, jax.Array]):
-    # See https://christian-igel.github.io/paper/AMERCMAUfES.pdf
     L, v = carry
-    _, d = v.shape
+    _, d = L.shape[0], L.shape[1]
 
-    # Update the diagonal elements
     L_kk = L[:, k, k]
     v_k = v[:, k]
     r = jnp.sqrt(L_kk**2 + v_k**2)
     L = L.at[:, k, k].set(r)
-
     c = (r / L_kk)[:, None]
     s = (v_k / L_kk)[:, None]
 
-    L = L.at[:, :, k].set((L[:, :, k] + s * v) / c)
-    v = c * v - s * L[:, :, k]
+    mask = jnp.arange(d) > k
+    L_col = L[:, :, k]
+
+    L_col = jnp.where(mask[None, :], (L_col + s * v) / c, L_col)
+    L = L.at[:, :, k].set(L_col)
+
+    v = jnp.where(mask[None, :], c * v - s * L[:, :, k], v)
 
     return L, v
 
 
 def welford_step(welford_state: WelfordState, q: jax.Array):
-    # At each step, we compute the within-chain covariance, and average their values
-    # to update L
     B, d = q.shape
     L = welford_state.L
-    n = welford_state.size + 1
+    C = welford_state.C
     mu = welford_state.mu
-    delta = q - mu[None, ...]  # (B, d)
+    n = welford_state.size
 
-    # Update the average
-    mu = mu + delta / n
-    u = q - mu
+    n_new = n + 1
+    delta = q - mu[None, :]
+    mu_new = mu + delta.mean(axis=0) / n_new
 
-    # Update the cholesky factorization
-    v = u / jnp.sqrt(n)  # (B, d)
-    L = jnp.broadcast_to(L, (B, d, d))  # (B, d, d)
-    L, _ = jax.lax.fori_loop(lower=0, upper=d, body_fun=cholesky_step, init_val=(L, v))
-    L = L.mean(axis=0)  # (d, d)
-    mu = mu.mean(axis=0)  # (d,)
+    v = delta * jnp.sqrt(n / n_new)
+    L_batched = jnp.broadcast_to(L, (B, d, d))
+    L_new, _ = jax.lax.fori_loop(0, d, cholesky_step, (L_batched, v))
+
+    L_new = L_new.mean(axis=0)
+    mu_new = mu_new.mean(axis=0)
+
+    L_new = jnp.where(n == 0, L, L_new)
+    mu_new = jnp.where(n == 0, q.mean(axis=0), mu_new)
+    n_new = jnp.where(n == 0, 1, n_new)
 
     return welford_state.replace(
-        L=L,
-        mu=mu,
-        size=n,
+        L=L_new,
+        C=C,
+        mu=mu_new,
+        size=n_new,
     )

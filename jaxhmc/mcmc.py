@@ -38,7 +38,7 @@ class HMCConfig:
 
     fast_tuning_steps: int = struct.field(pytree_node=False, default=1000)
     slow_tuning_phases: int = struct.field(pytree_node=False, default=6)
-    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=100)
+    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=50)
 
 
 def hmc_step(
