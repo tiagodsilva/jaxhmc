@@ -40,3 +40,28 @@ class GaussianMixturePotential(Potential):
         potential = jnp.sum(potential, axis=1)
         potential = jax.nn.logsumexp(-potential / 2, axis=0)
         return -potential + jnp.log(self.k)
+
+
+class BananaPotential(Potential):
+    def __init__(self, dim: int = 2, b: float = 4):
+        super().__init__(dim)
+        self.dim = dim
+        self.b = b
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        x_sq = x * x
+        log_p = x_sq[0] + (x[1] - self.b * (x_sq[0] - 1)) ** 2
+        return log_p
+
+
+class RingsPotential(Potential):
+    def __init__(self, dim: int = 2, radii: tuple[float, float] = (2.0, 4.0), sigma: float = 0.15):
+        super().__init__(dim)
+        self.dim = dim
+        self.radii = jnp.array(radii)  # radii of the two rings
+        self.sigma = sigma  # width of each ring
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        r = jnp.sqrt(jnp.sum(x**2))
+        ring_potentials = (r - self.radii) ** 2 / (2 * self.sigma**2)
+        return -jax.nn.logsumexp(-ring_potentials)
