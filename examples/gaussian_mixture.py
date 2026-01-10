@@ -27,10 +27,10 @@ means = jnp.vstack(
     ],
 )
 
-potential = GaussianMixturePotential(means=means, sigma=0.25)
+potential = GaussianMixturePotential(means=means, sigma=0.3)
 config = HMCConfig(
     initial_step_size=0.2,
-    max_path_len=2,
+    max_path_len=6,
     iterations=SAMPLES,
     initial_precm=jnp.eye(dim),
     key=key,

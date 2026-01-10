@@ -151,12 +151,12 @@ def update_welford_state(
     **kwargs,
 ):
     q, key, welford_state, precm, precm_L = carry
-    new_q, key, _, new_ws = jax.lax.fori_loop(
+    new_q, key, nesterov_state, new_ws = jax.lax.fori_loop(
         lower=0,
         upper=initial_chain_length * (2**i),
         body_fun=partial(
             hmc_fori_step,
-            step_size_tuning=False,
+            step_size_tuning=True,
             momentum_tuning=True,
             precm=precm,
             precm_L=precm_L,
@@ -226,6 +226,8 @@ def hmc_tune(
         ),
         init_val=(q, key, welford_state, precm, precm_L),
     )
+
+    nesterov_state = nesterov_state.replace(t=1)
 
     # We further refine the step size based on the updated momentum.
     (q, key, nesterov_state, _), _ = run_hmc_chain(
