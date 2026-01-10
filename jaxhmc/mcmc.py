@@ -44,31 +44,30 @@ class HMCConfig:
 def hmc_step(
     q: jax.Array,
     key: jax.Array,
+    # For tuning
     nesterov_state: NesterovState,
     welford_state: WelfordState,
     *,
     pot_vmap: callable,
     pot_grad_vmap: callable,
+    precm: jax.Array,
+    precm_L: jax.Array,
     steps: int,
     max_steps: int,
+    # For tuning
     nesterov_config: NesterovConfig,
     step_size_tuning: bool,
     momentum_tuning: bool,
 ):
     B, d = q.shape
 
-    p, key = sample_gaussian_from_precision(
-        B,
-        d,
-        welford_state.L,
-        key,
-    )
+    p, key = sample_gaussian_from_precision(B, d, precm_L, key)
 
     # We first simulate the dynamics
     p_new, q_new = leapfrog(
         p,
         q,
-        welford_state.C,
+        precm,
         pot_grad_vmap,
         steps=steps,
         max_steps=max_steps,
@@ -77,7 +76,7 @@ def hmc_step(
 
     # Compute the Hamiltonian
     def hamiltonian(p_st, q_st):
-        return pot_vmap(q_st) + 0.5 * jnp.einsum("bi, ij, bj->b", p_st, welford_state.C, p_st)
+        return pot_vmap(q_st) + 0.5 * jnp.einsum("bi, ij, bj->b", p_st, precm, p_st)
 
     H = hamiltonian(p, q)
     H_new = hamiltonian(p_new, q_new)
@@ -146,12 +145,12 @@ def run_hmc_chain(
 
 def update_welford_state(
     i: int,
-    carry: tuple[jax.Array, WelfordState, jax.Array],
+    carry: tuple[jax.Array, WelfordState, jax.Array, jax.Array, jax.Array],
     initial_chain_length: int,
     nesterov_state: NesterovState,
     **kwargs,
 ):
-    q, welford_state, key = carry
+    q, key, welford_state, precm, precm_L = carry
     new_q, key, _, new_ws = jax.lax.fori_loop(
         lower=0,
         upper=initial_chain_length * 2**i,
@@ -159,20 +158,24 @@ def update_welford_state(
             hmc_fori_step,
             step_size_tuning=False,
             momentum_tuning=True,
+            precm=precm,
+            precm_L=precm_L,
             **kwargs,
         ),
         init_val=(q, key, nesterov_state, welford_state),
     )
 
-    new_ws = new_ws.replace(
-        C=new_ws.L @ new_ws.L.T,
-    )
-    return new_q, new_ws, key
+    precm_L = new_ws.L
+    precm = precm_L @ precm_L.T
+
+    return new_q, key, new_ws, precm, precm_L
 
 
 def hmc_tune(
     pot_vmap: callable,
     pot_grad_vmap: callable,
+    precm: jax.Array,
+    precm_L: jax.Array,
     steps: int,
     max_steps: int,
     initial_position: jax.Array,
@@ -189,10 +192,6 @@ def hmc_tune(
         "nesterov_config": nesterov_config,
     }
 
-    welford_state = welford_state.replace(
-        C=welford_state.L @ welford_state.L.T,
-    )
-
     # We first tune the step size (fast tuning).
     (q, key, nesterov_state, welford_state), _ = run_hmc_chain(
         **kwargs,
@@ -201,6 +200,8 @@ def hmc_tune(
         welford_state=welford_state,
         nesterov_state=nesterov_state,
         initial_position=initial_position,
+        precm=precm,
+        precm_L=precm_L,
         step_size_tuning=True,
         momentum_tuning=False,
     )
@@ -212,7 +213,7 @@ def hmc_tune(
     # The i-th interval uses the momentum matrix M^{(i - 1)} obtained
     # from the prior interval.
 
-    (q, welford_state, key) = jax.lax.fori_loop(
+    (q, key, welford_state, precm, precm_L) = jax.lax.fori_loop(
         lower=0,
         upper=config.slow_tuning_phases,
         # carry = p, q, nesterov_state, welford_state
@@ -222,7 +223,7 @@ def hmc_tune(
             nesterov_state=nesterov_state,
             **kwargs,
         ),
-        init_val=(q, welford_state, key),
+        init_val=(q, key, welford_state, precm, precm_L),
     )
 
     # We further refine the step size based on the updated momentum.
@@ -233,11 +234,34 @@ def hmc_tune(
         welford_state=welford_state,
         nesterov_state=nesterov_state,
         initial_position=q,
+        precm=precm,
+        precm_L=precm_L,
         step_size_tuning=True,
         momentum_tuning=False,
     )
 
-    return (q, key, nesterov_state, welford_state)
+    return q, key, nesterov_state, precm, precm_L
+
+
+def init_states(config: HMCConfig, precm_L: jax.Array):
+    nesterov_state = NesterovState(
+        step_size=config.initial_step_size,
+        running_avg=jnp.log(config.initial_step_size),
+    )
+    nesterov_config = NesterovConfig(
+        mu=jnp.log(10 * config.initial_step_size),
+        gamma=20,  # Equivalent to 0.05 on Hoffman's works
+    )
+
+    welford_state = WelfordState(
+        L=precm_L,
+        mu=jnp.zeros((precm_L.shape[1],)),
+        # This should be actually null, as we need a pair of points for
+        # computing the covariance, however, letting s = 1 allows for a cleaner implementation
+        size=0,
+    )
+
+    return nesterov_state, nesterov_config, welford_state
 
 
 @jax.jit
@@ -249,23 +273,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     # We first compute the Cholesky decomposition of the precision matrix
     precm_L = jnp.linalg.cholesky(config.initial_precm)
 
-    nesterov_state = NesterovState(
-        step_size=config.initial_step_size,
-        running_avg=jnp.log(config.initial_step_size),
-    )
-    nesterov_config = NesterovConfig(
-        mu=jnp.log(10 * config.initial_step_size),
-        gamma=20,
-    )
-
-    welford_state = WelfordState(
-        L=precm_L,
-        C=config.initial_precm,
-        mu=jnp.zeros((d,)),
-        # This should be actually null, as we need a pair of points for
-        # computing the covariance, however, letting s = 1 allows for a cleaner implementation
-        size=1,
-    )
+    nesterov_state, nesterov_config, welford_state = init_states(config, precm_L)
 
     # First step: Tuning.
     # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
@@ -276,10 +284,12 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
         step_size=jnp.exp(nesterov_state.running_avg),
     )
 
-    q, key, nesterov_state, welford_state = hmc_tune(
+    q, key, nesterov_state, precm, precm_L = hmc_tune(
         pot_vmap=pot_vmap,
         pot_grad_vmap=pot_grad_vmap,
         steps=steps,
+        precm=config.initial_precm,
+        precm_L=precm_L,
         max_steps=max_steps,
         initial_position=initial_position,
         nesterov_state=nesterov_state,
@@ -296,6 +306,8 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     _, (p, q) = run_hmc_chain(
         pot_vmap=pot_vmap,
         pot_grad_vmap=pot_grad_vmap,
+        precm=precm,
+        precm_L=precm_L,
         steps=steps,
         max_steps=steps,
         key=key,

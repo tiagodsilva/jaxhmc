@@ -17,7 +17,7 @@ class NesterovConfig:
 
     goal: float = struct.field(pytree_node=False, default=0.8)
     gamma: float = struct.field(pytree_node=False, default=0.05)
-    to: float = struct.field(pytree_node=False, default=10)
+    to: float = struct.field(pytree_node=False, default=20)
     kappa: float = struct.field(pytree_node=False, default=0.75)
 
     log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-2))
@@ -36,7 +36,6 @@ def _step(carry: NesterovState, pa: float, config: NesterovConfig):
     eta = (carry.t + config.to) ** (-config.kappa)  # This avoids attributing excessive weight to initial iterations
     running_avg = (1 - eta) * carry.running_avg + eta * log_step
 
-    jax.debug.print("{}", jnp.exp(log_step))
     return NesterovState(
         running_avg=running_avg,
         error=error,
@@ -56,14 +55,13 @@ def nesterov_dual_averaging(
 @struct.dataclass
 class WelfordState:
     L: jax.Array
-    C: jax.Array
     mu: jax.Array
     size: jax.Array
 
 
 def cholesky_step(k: int, carry: tuple[jax.Array, jax.Array]):
     L, v = carry
-    _, d = L.shape[0], L.shape[1]
+    d = L.shape[1]
 
     L_kk = L[:, k, k]
     v_k = v[:, k]
@@ -86,7 +84,6 @@ def cholesky_step(k: int, carry: tuple[jax.Array, jax.Array]):
 def welford_step(welford_state: WelfordState, q: jax.Array):
     B, d = q.shape
     L = welford_state.L
-    C = welford_state.C
     mu = welford_state.mu
     n = welford_state.size
 
@@ -107,7 +104,6 @@ def welford_step(welford_state: WelfordState, q: jax.Array):
 
     return welford_state.replace(
         L=L_new,
-        C=C,
         mu=mu_new,
         size=n_new,
     )
