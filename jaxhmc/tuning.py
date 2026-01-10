@@ -1,3 +1,5 @@
+from functools import partial
+
 import flax.struct as struct
 import jax
 import jax.numpy as jnp
@@ -24,7 +26,7 @@ class NesterovConfig:
     log_max_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e1))
 
 
-def _step(carry: NesterovState, pa: float, config: NesterovConfig):
+def _nstep(carry: NesterovState, pa: float, config: NesterovConfig):
     error = carry.error + config.goal - pa
     log_step = config.mu - config.gamma * error / jnp.sqrt(carry.t)
     log_step = jnp.clip(
@@ -49,7 +51,7 @@ def nesterov_dual_averaging(
     pa: jax.Array,
     config: NesterovConfig,
 ):
-    return _step(carry, pa, config)
+    return _nstep(carry, pa, config)
 
 
 @struct.dataclass
@@ -59,24 +61,31 @@ class WelfordState:
     size: jax.Array
 
 
-def welford_step(welford_state: WelfordState, q: jax.Array):
-    B, _ = q.shape
+def _wstep(
+    welford_state: WelfordState,
+    q: jax.Array,  # (d,)
+):
     C = welford_state.C  # (d, d)
     mu = welford_state.mu  # (d,)
-    n_old = welford_state.size
-    n_new = n_old + B
+    n = welford_state.size + 1
+    delta = q - mu  # (d,)
+    mu = mu + delta / n  # (d,)
+    delta2 = q - mu  # (d,)
 
-    # Update mean
-    delta = q - mu  # (B, d)
-    mu_new = mu + delta.sum(axis=0) / n_new
-
-    # Update covariance
-    delta2 = q - mu_new  # (B, d)
-    C_upd = jnp.einsum("bi,bj->ij", delta, delta2)  # sum over batch
-    C_new = C + C_upd
+    C_new = C + jnp.outer(delta, delta2)  # (d, d)
 
     return welford_state.replace(
         C=C_new,
-        mu=mu_new,
-        size=n_new,
+        mu=mu,
+        size=n,
+    ), None
+
+
+def welford_step(welford_state: WelfordState, q: jax.Array):
+    out, _ = jax.lax.scan(
+        f=_wstep,
+        length=q.shape[0],
+        init=welford_state,
+        xs=q,
     )
+    return out

@@ -36,9 +36,9 @@ class HMCConfig:
     initial_precm: jax.Array
     key: jax.Array
 
-    fast_tuning_steps: int = struct.field(pytree_node=False, default=1000)
+    fast_tuning_steps: int = struct.field(pytree_node=False, default=125)
     slow_tuning_phases: int = struct.field(pytree_node=False, default=8)
-    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=200)
+    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=50)
 
 
 def hmc_step(
@@ -165,7 +165,7 @@ def update_welford_state(
         init_val=(q, key, nesterov_state, welford_state),
     )
 
-    precm = new_ws.C / new_ws.size
+    precm = jnp.linalg.inv(new_ws.C / new_ws.size)
     precm_L = jnp.linalg.cholesky(precm)
     new_ws = new_ws.replace(size=0, mu=jnp.zeros((q.shape[1],)))
 
@@ -251,11 +251,11 @@ def init_states(config: HMCConfig, q: jax.Array, precm: jax.Array):
     )
     nesterov_config = NesterovConfig(
         mu=jnp.log(10 * config.initial_step_size),
-        gamma=10,  # Equivalent to 0.1 on Hoffman's works
+        gamma=20,  # Equivalent to 0.05 on Hoffman's works
     )
 
     welford_state = WelfordState(
-        C=precm,
+        C=jnp.linalg.inv(precm),
         mu=jnp.zeros((q.shape[1],)),
         # This should be actually null, as we need a pair of points for
         # computing the covariance, however, letting s = 1 allows for a cleaner implementation
