@@ -50,3 +50,64 @@ def nesterov_dual_averaging(
     config: NesterovConfig,
 ):
     return _step(carry, pa, config)
+
+
+@struct.dataclass
+class WelfordState:
+    L: jax.Array
+    C: jax.Array
+
+    size: jax.Array
+
+    mu: jax.Array
+
+
+def cholesky_step(k: int, carry: tuple[jax.Array, jax.Array]):
+    # See https://christian-igel.github.io/paper/AMERCMAUfES.pdf
+    L, v = carry
+    _, d = v.shape
+
+    # Update the diagonal elements
+    L_kk = L[:, k, k]
+    v_k = v[:, k]
+    r = jnp.sqrt(L_kk**2 + v_k**2)
+    L = L.at[:, k, k].set(r)
+
+    c = (r / L_kk)[:, None]
+    s = (v_k / L_kk)[:, None]
+
+    # Update the Cholesky decomposition
+    mask = jnp.tril(jnp.ones((d, d)), k=1)
+    m_kk = mask[None, k, :]
+
+    L = L.at[:, :, k].set(m_kk * (L[:, :, k] + s * v[:, :]) / c + (1 - m_kk) * L[:, :, k])
+    v = m_kk * (c * v - s * L[:, :, k]) + (1 - m_kk) * v
+
+    return L, v
+
+
+def welford_step(welford_state: WelfordState, q: jax.Array):
+    # At each step, we compute the within-chain covariance, and average their values
+    # to update L
+    B, d = q.shape
+    L = welford_state.L
+    n = welford_state.size + 1
+    mu = welford_state.mu
+    delta = q - mu[None, ...]  # (B, d)
+
+    # Update the average
+    mu = mu + delta / n
+    u = q - mu
+
+    # Update the cholesky factorization
+    v = u / jnp.sqrt(n)  # (B, d)
+    L = jnp.broadcast_to(L, (B, d, d))  # (B, d, d)
+    L, _ = jax.lax.fori_loop(lower=0, upper=d, body_fun=cholesky_step, init_val=(L, v))
+    L = L.mean(axis=0)  # (d, d)
+    mu = mu.mean(axis=0)  # (d,)
+
+    return welford_state.replace(
+        L=L,
+        mu=mu,
+        size=n,
+    )

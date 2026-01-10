@@ -1,3 +1,5 @@
+import time
+
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -5,19 +7,19 @@ import matplotlib.pyplot as plt
 from jaxhmc.mcmc import HMCConfig, RandomWalkConfig, hmc, random_walk
 from jaxhmc.potentials import GaussianMixturePotential
 
-SAMPLES = 1_000_000
+SAMPLES = 500_000
 
 # We first sample a initial position
 key = jax.random.key(42)
 key, subkey = jax.random.split(key, 2)
-initial_position = jax.random.uniform(subkey, (4, 2))
+initial_position = jax.random.uniform(subkey, (16, 2))
 
 dim = initial_position.shape[1]
 
 # We the run the HMC
 means = jnp.vstack([jnp.ones(dim) + 2, jnp.ones(dim), jnp.ones(dim) - 2])
 
-potential = GaussianMixturePotential(means=means, sigma=0.25)
+potential = GaussianMixturePotential(means=means, sigma=0.2)
 config = HMCConfig(
     initial_step_size=0.2,
     max_path_len=2,
@@ -26,11 +28,16 @@ config = HMCConfig(
     key=key,
 )
 
+start_time = time.monotonic_ns()
 momenta, samples_hmc = hmc(
     potential=potential,
     initial_position=initial_position,
     config=config,
 )
+
+samples_hmc.block_until_ready()
+end_time = time.monotonic_ns()
+print(f"HMC took {(end_time - start_time) / 1e6:.2f} ms")
 
 warmup = min(5000, int(config.iterations * 0.1))
 samples_hmc = samples_hmc[warmup:]
@@ -38,15 +45,20 @@ samples_hmc = samples_hmc.reshape(-1, 2)
 
 config = RandomWalkConfig(
     initial_step_size=0.2,
-    iterations=SAMPLES,
+    iterations=2 * SAMPLES,
     key=key,
 )
 
+start_time = time.monotonic_ns()
 samples_rw = random_walk(
     potential=potential,
     initial_position=initial_position,
     config=config,
 )
+
+samples_rw.block_until_ready()
+end_time = time.monotonic_ns()
+print(f"Random Walk took {(end_time - start_time) / 1e6:.2f} ms")
 
 warmup = min(5000, int(config.iterations * 0.1))
 samples_rw = samples_rw[warmup:]
