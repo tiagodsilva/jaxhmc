@@ -37,13 +37,16 @@ class HMCConfig:
     key: jax.Array
 
     fast_tuning_steps: int = struct.field(pytree_node=False, default=1000)
-    slow_tuning_phases: int = struct.field(pytree_node=False, default=8)
-    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=50)
+    slow_tuning_phases: int = struct.field(pytree_node=False, default=6)
+    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=100)
 
 
 def hmc_step(
-    carry: tuple[jax.Array, jax.Array, NesterovState, WelfordState],
-    _,
+    q: jax.Array,
+    key: jax.Array,
+    nesterov_state: NesterovState,
+    welford_state: WelfordState,
+    *,
     pot_vmap: callable,
     pot_grad_vmap: callable,
     steps: int,
@@ -52,7 +55,6 @@ def hmc_step(
     step_size_tuning: bool,
     momentum_tuning: bool,
 ):
-    q, key, nesterov_state, welford_state = carry
     B, d = q.shape
 
     p, key = sample_gaussian_from_precision(
@@ -92,23 +94,36 @@ def hmc_step(
     p_next = jnp.where(b == 1, p_new, p)
     q_next = jnp.where(b == 1, q_new, q)
 
-    nesterov_state = jax.lax.cond(
-        step_size_tuning,
-        lambda: nesterov_dual_averaging(
+    if step_size_tuning:
+        nesterov_state = nesterov_dual_averaging(
             nesterov_state,
             jnp.mean(alpha),
             nesterov_config,
-        ),
-        lambda: nesterov_state,
-    )
+        )
 
-    welford_state = jax.lax.cond(
-        momentum_tuning,
-        lambda: welford_step(welford_state, q_next),
-        lambda: welford_state,
-    )
+    if momentum_tuning:
+        welford_state = welford_step(welford_state, q_next)
 
     return (q_next, key, nesterov_state, welford_state), (p_next, q_next)
+
+
+def hmc_scan_step(
+    carry: tuple[jax.Array, jax.Array, NesterovState, WelfordState],
+    _,
+    **kwargs,
+):
+    q, key, nesterov_state, welford_state = carry
+    return hmc_step(q, key, nesterov_state, welford_state, **kwargs)
+
+
+def hmc_fori_step(
+    _,
+    carry: tuple[jax.Array, jax.Array, NesterovState, WelfordState],
+    **kwargs,
+):
+    q, key, nesterov_state, welford_state = carry
+    out, _ = hmc_step(q, key, nesterov_state, welford_state, **kwargs)
+    return out
 
 
 def run_hmc_chain(
@@ -121,7 +136,7 @@ def run_hmc_chain(
 ):
     return jax.lax.scan(
         f=partial(
-            hmc_step,
+            hmc_scan_step,
             **kwargs,
         ),
         init=(initial_position, key, nesterov_state, welford_state),
@@ -131,23 +146,28 @@ def run_hmc_chain(
 
 def update_welford_state(
     i: int,
-    carry: tuple[WelfordState, jax.Array],
+    carry: tuple[jax.Array, WelfordState, jax.Array],
     initial_chain_length: int,
+    nesterov_state: NesterovState,
     **kwargs,
 ):
-    welford_state, key = carry
-    (_, key, _, new_ws), _ = run_hmc_chain(
-        **kwargs,
-        length=100,  # initial_chain_length * 2**i,
-        welford_state=welford_state,
-        key=key,
-        step_size_tuning=False,
-        momentum_tuning=True,
+    q, welford_state, key = carry
+    new_q, key, _, new_ws = jax.lax.fori_loop(
+        lower=0,
+        upper=initial_chain_length * 2**i,
+        body_fun=partial(
+            hmc_fori_step,
+            step_size_tuning=False,
+            momentum_tuning=True,
+            **kwargs,
+        ),
+        init_val=(q, key, nesterov_state, welford_state),
     )
+
     new_ws = new_ws.replace(
         C=new_ws.L @ new_ws.L.T,
     )
-    return new_ws, key
+    return new_q, new_ws, key
 
 
 def hmc_tune(
@@ -167,8 +187,6 @@ def hmc_tune(
         "steps": steps,
         "max_steps": max_steps,
         "nesterov_config": nesterov_config,
-        "initial_position": initial_position,
-        "nesterov_state": nesterov_state,
     }
 
     welford_state = welford_state.replace(
@@ -181,11 +199,11 @@ def hmc_tune(
         length=config.fast_tuning_steps,
         key=config.key,
         welford_state=welford_state,
+        nesterov_state=nesterov_state,
+        initial_position=initial_position,
         step_size_tuning=True,
         momentum_tuning=False,
     )
-
-    kwargs.update({"nesterov_state": nesterov_state, "initial_position": q})
 
     # We then tune the momentum distribution (slow, step-wise tuning).
     # For this, we follow Stan's implementation and run our chain on
@@ -194,21 +212,32 @@ def hmc_tune(
     # The i-th interval uses the momentum matrix M^{(i - 1)} obtained
     # from the prior interval.
 
-    (new_welford_state, key) = jax.lax.fori_loop(
+    (q, welford_state, key) = jax.lax.fori_loop(
         lower=0,
         upper=config.slow_tuning_phases,
         # carry = p, q, nesterov_state, welford_state
         body_fun=partial(
             update_welford_state,
             initial_chain_length=config.slow_tuning_initial_length,
+            nesterov_state=nesterov_state,
             **kwargs,
         ),
-        init_val=(welford_state, key),
+        init_val=(q, welford_state, key),
     )
 
     # We further refine the step size based on the updated momentum.
+    (q, key, nesterov_state, _), _ = run_hmc_chain(
+        **kwargs,
+        length=config.fast_tuning_steps,
+        key=key,
+        welford_state=welford_state,
+        nesterov_state=nesterov_state,
+        initial_position=q,
+        step_size_tuning=True,
+        momentum_tuning=False,
+    )
 
-    return (q, key, nesterov_state, new_welford_state)
+    return (q, key, nesterov_state, welford_state)
 
 
 @jax.jit
@@ -220,9 +249,13 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     # We first compute the Cholesky decomposition of the precision matrix
     precm_L = jnp.linalg.cholesky(config.initial_precm)
 
-    nesterov_state = NesterovState(step_size=config.initial_step_size)
+    nesterov_state = NesterovState(
+        step_size=config.initial_step_size,
+        running_avg=jnp.log(config.initial_step_size),
+    )
     nesterov_config = NesterovConfig(
         mu=jnp.log(10 * config.initial_step_size),
+        gamma=20,
     )
 
     welford_state = WelfordState(
@@ -310,15 +343,12 @@ def random_walk_step(
     new_position = jnp.where(b == 1, new_position, position)
 
     # Update the step size via Nesterov dual averaging only if we are in the tuning phase
-    nesterov_state = jax.lax.cond(
-        tuning,
-        lambda: nesterov_dual_averaging(
+    if tuning:
+        nesterov_state = nesterov_dual_averaging(
             nesterov_state,
             jnp.mean(alpha),
             nesterov_config,
-        ),
-        lambda: nesterov_state,
-    )
+        )
 
     return (new_position, key, nesterov_state), new_position
 
@@ -360,7 +390,7 @@ def random_walk(potential: Potential, initial_position: jax.Array, config: Rando
             pot_vmap=pot_vmap,
             batch_size=batch_size,
             nesterov_config=nesterov_config,
-            tuning=True,
+            tuning=False,
         ),
         init=(position, key, nesterov_state),
         length=config.iterations,

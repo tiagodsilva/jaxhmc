@@ -20,13 +20,13 @@ class NesterovConfig:
     to: float = struct.field(pytree_node=False, default=10)
     kappa: float = struct.field(pytree_node=False, default=0.75)
 
-    log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-3))
+    log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-2))
     log_max_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e1))
 
 
 def _step(carry: NesterovState, pa: float, config: NesterovConfig):
     error = carry.error + config.goal - pa
-    log_step = config.mu - error / (jnp.sqrt(carry.t) * config.gamma)
+    log_step = config.mu - config.gamma * error / jnp.sqrt(carry.t)
     log_step = jnp.clip(
         log_step,
         min=config.log_min_step_size,
@@ -36,6 +36,7 @@ def _step(carry: NesterovState, pa: float, config: NesterovConfig):
     eta = (carry.t + config.to) ** (-config.kappa)  # This avoids attributing excessive weight to initial iterations
     running_avg = (1 - eta) * carry.running_avg + eta * log_step
 
+    jax.debug.print("{}", jnp.exp(log_step))
     return NesterovState(
         running_avg=running_avg,
         error=error,
@@ -56,10 +57,9 @@ def nesterov_dual_averaging(
 class WelfordState:
     L: jax.Array
     C: jax.Array
+    mu: jax.Array
 
     size: jax.Array
-
-    mu: jax.Array
 
 
 def cholesky_step(k: int, carry: tuple[jax.Array, jax.Array]):
@@ -76,12 +76,8 @@ def cholesky_step(k: int, carry: tuple[jax.Array, jax.Array]):
     c = (r / L_kk)[:, None]
     s = (v_k / L_kk)[:, None]
 
-    # Update the Cholesky decomposition
-    mask = jnp.tril(jnp.ones((d, d)), k=1)
-    m_kk = mask[None, k, :]
-
-    L = L.at[:, :, k].set(m_kk * (L[:, :, k] + s * v[:, :]) / c + (1 - m_kk) * L[:, :, k])
-    v = m_kk * (c * v - s * L[:, :, k]) + (1 - m_kk) * v
+    L = L.at[:, :, k].set((L[:, :, k] + s * v) / c)
+    v = c * v - s * L[:, :, k]
 
     return L, v
 

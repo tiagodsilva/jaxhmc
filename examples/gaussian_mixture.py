@@ -19,7 +19,7 @@ dim = initial_position.shape[1]
 # We the run the HMC
 means = jnp.vstack([jnp.ones(dim) + 2, jnp.ones(dim), jnp.ones(dim) - 2])
 
-potential = GaussianMixturePotential(means=means, sigma=0.2)
+potential = GaussianMixturePotential(means=means, sigma=0.05)
 config = HMCConfig(
     initial_step_size=0.2,
     max_path_len=2,
