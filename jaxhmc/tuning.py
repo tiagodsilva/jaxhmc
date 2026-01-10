@@ -62,7 +62,7 @@ class WelfordState:
 def welford_step(welford_state: WelfordState, q: jax.Array):
     B, _ = q.shape
     C = welford_state.C  # (d, d)
-    mu = welford_state.mu  # (d,) - fixed: removed +1
+    mu = welford_state.mu  # (d,)
     n_old = welford_state.size
     n_new = n_old + B
 
