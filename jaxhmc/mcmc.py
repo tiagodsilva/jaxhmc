@@ -37,8 +37,8 @@ class HMCConfig:
     key: jax.Array
 
     fast_tuning_steps: int = struct.field(pytree_node=False, default=1000)
-    slow_tuning_phases: int = struct.field(pytree_node=False, default=6)
-    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=50)
+    slow_tuning_phases: int = struct.field(pytree_node=False, default=8)
+    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=200)
 
 
 def hmc_step(
@@ -153,7 +153,7 @@ def update_welford_state(
     q, key, welford_state, precm, precm_L = carry
     new_q, key, _, new_ws = jax.lax.fori_loop(
         lower=0,
-        upper=initial_chain_length * 2**i,
+        upper=initial_chain_length * (2**i),
         body_fun=partial(
             hmc_fori_step,
             step_size_tuning=False,
@@ -167,6 +167,7 @@ def update_welford_state(
 
     precm = new_ws.C / new_ws.size
     precm_L = jnp.linalg.cholesky(precm)
+    new_ws = new_ws.replace(size=0, mu=jnp.zeros((q.shape[1],)))
 
     return new_q, key, new_ws, precm, precm_L
 
@@ -250,7 +251,7 @@ def init_states(config: HMCConfig, q: jax.Array, precm: jax.Array):
     )
     nesterov_config = NesterovConfig(
         mu=jnp.log(10 * config.initial_step_size),
-        gamma=20,  # Equivalent to 0.05 on Hoffman's works
+        gamma=10,  # Equivalent to 0.1 on Hoffman's works
     )
 
     welford_state = WelfordState(
