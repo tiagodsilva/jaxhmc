@@ -17,7 +17,7 @@ class NesterovConfig:
 
     goal: float = struct.field(pytree_node=False, default=0.8)
     gamma: float = struct.field(pytree_node=False, default=0.05)
-    to: float = struct.field(pytree_node=False, default=20)
+    to: float = struct.field(pytree_node=False, default=10)
     kappa: float = struct.field(pytree_node=False, default=0.75)
 
     log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-2))
@@ -54,57 +54,29 @@ def nesterov_dual_averaging(
 
 @struct.dataclass
 class WelfordState:
-    L: jax.Array
+    C: jax.Array
     mu: jax.Array
     size: jax.Array
 
 
-def cholesky_step(k: int, carry: tuple[jax.Array, jax.Array]):
-    L, v = carry
-    d = L.shape[1]
-
-    L_kk = L[:, k, k]
-    v_k = v[:, k]
-    r = jnp.sqrt(L_kk**2 + v_k**2)
-    L = L.at[:, k, k].set(r)
-    c = (r / L_kk)[:, None]
-    s = (v_k / L_kk)[:, None]
-
-    mask = jnp.arange(d) > k
-    L_col = L[:, :, k]
-
-    L_col = jnp.where(mask[None, :], (L_col + s * v) / c, L_col)
-    L = L.at[:, :, k].set(L_col)
-
-    v = jnp.where(mask[None, :], c * v - s * L[:, :, k], v)
-
-    return L, v
-
-
 def welford_step(welford_state: WelfordState, q: jax.Array):
-    B, d = q.shape
-    L = welford_state.L
-    mu = welford_state.mu
-    n = welford_state.size
+    B, _ = q.shape
+    C = welford_state.C  # (d, d)
+    mu = welford_state.mu  # (d,) - fixed: removed +1
+    n_old = welford_state.size
+    n_new = n_old + B
 
-    n_new = n + 1
-    delta = q - mu[None, :]
-    mu_new = mu + delta.mean(axis=0) / n_new
+    # Update mean
+    delta = q - mu  # (B, d)
+    mu_new = mu + delta.sum(axis=0) / n_new
 
-    v = delta * jnp.sqrt(n / n_new)
-    L_batched = jnp.broadcast_to(L, (B, d, d))
-    L_new, _ = jax.lax.fori_loop(0, d, cholesky_step, (L_batched, v))
-
-    # Arbitrary. Ensure common matrix for the chains.
-    L_new = L_new.mean(axis=0)
-    mu_new = mu_new.mean(axis=0)
-
-    L_new = jnp.where(n == 0, L, L_new)
-    mu_new = jnp.where(n == 0, q.mean(axis=0), mu_new)
-    n_new = jnp.where(n == 0, 1, n_new)
+    # Update covariance
+    delta2 = q - mu_new  # (B, d)
+    C_upd = jnp.einsum("bi,bj->ij", delta, delta2)  # sum over batch
+    C_new = C + C_upd
 
     return welford_state.replace(
-        L=L_new,
+        C=C_new,
         mu=mu_new,
         size=n_new,
     )

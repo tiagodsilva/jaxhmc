@@ -165,8 +165,8 @@ def update_welford_state(
         init_val=(q, key, nesterov_state, welford_state),
     )
 
-    precm_L = new_ws.L
-    precm = precm_L @ precm_L.T
+    precm = new_ws.C / new_ws.size
+    precm_L = jnp.linalg.cholesky(precm)
 
     return new_q, key, new_ws, precm, precm_L
 
@@ -243,7 +243,7 @@ def hmc_tune(
     return q, key, nesterov_state, precm, precm_L
 
 
-def init_states(config: HMCConfig, precm_L: jax.Array):
+def init_states(config: HMCConfig, q: jax.Array, precm: jax.Array):
     nesterov_state = NesterovState(
         step_size=config.initial_step_size,
         running_avg=jnp.log(config.initial_step_size),
@@ -254,8 +254,8 @@ def init_states(config: HMCConfig, precm_L: jax.Array):
     )
 
     welford_state = WelfordState(
-        L=precm_L,
-        mu=jnp.zeros((precm_L.shape[1],)),
+        C=precm,
+        mu=jnp.zeros((q.shape[1],)),
         # This should be actually null, as we need a pair of points for
         # computing the covariance, however, letting s = 1 allows for a cleaner implementation
         size=0,
@@ -272,7 +272,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     # We first compute the Cholesky decomposition of the precision matrix
     precm_L = jnp.linalg.cholesky(config.initial_precm)
 
-    nesterov_state, nesterov_config, welford_state = init_states(config, precm_L)
+    nesterov_state, nesterov_config, welford_state = init_states(config, initial_position, config.initial_precm)
 
     # First step: Tuning.
     # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
