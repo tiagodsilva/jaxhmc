@@ -15,7 +15,7 @@ def _step(
     step_size: float,
     steps: int,
 ):
-    should_update = idx < steps
+    should_update = idx <= steps
 
     def integrate():
         p, q = carry  # (B, d)
