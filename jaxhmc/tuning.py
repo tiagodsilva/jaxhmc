@@ -22,7 +22,7 @@ class NesterovConfig:
     to: float = struct.field(pytree_node=False, default=10)
     kappa: float = struct.field(pytree_node=False, default=0.75)
 
-    log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-2))
+    log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-3))
     log_max_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e1))
 
 

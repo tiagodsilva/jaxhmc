@@ -167,7 +167,7 @@ def update_welford_state(
 
     precm = jnp.linalg.inv(new_ws.C / new_ws.size)
     precm_L = jnp.linalg.cholesky(precm)
-    new_ws = new_ws.replace(size=0, mu=jnp.zeros((q.shape[1],)))
+    new_ws = new_ws.replace(size=0)
 
     return new_q, key, new_ws, precm, precm_L
 
@@ -253,7 +253,7 @@ def init_states(config: HMCConfig, q: jax.Array, precm: jax.Array):
     )
     nesterov_config = NesterovConfig(
         mu=jnp.log(10 * config.initial_step_size),
-        gamma=20,  # Equivalent to 0.05 on Hoffman's works
+        gamma=1,  # Equivalent to 1 on Hoffman's works
     )
 
     welford_state = WelfordState(
