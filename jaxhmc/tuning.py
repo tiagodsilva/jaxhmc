@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 @struct.dataclass
 class NesterovState:
-    running_avg: jax.Array = 0.0
+    log_running_avg: jax.Array = 0.0
     error: jax.Array = 0.0
     step_size: jax.Array = 1.0
     t: jax.Array = 1
@@ -22,7 +22,7 @@ class NesterovConfig:
     to: float = struct.field(pytree_node=False, default=10)
     kappa: float = struct.field(pytree_node=False, default=0.75)
 
-    log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-3))
+    log_min_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e-2))
     log_max_step_size: float = struct.field(pytree_node=False, default_factory=lambda: jnp.log(1e1))
 
 
@@ -36,10 +36,10 @@ def _nstep(carry: NesterovState, pa: float, config: NesterovConfig):
     )
 
     eta = (carry.t + config.to) ** (-config.kappa)  # This avoids attributing excessive weight to initial iterations
-    running_avg = (1 - eta) * carry.running_avg + eta * log_step
+    log_running_avg = (1 - eta) * carry.log_running_avg + eta * log_step
 
     return NesterovState(
-        running_avg=running_avg,
+        log_running_avg=log_running_avg,
         error=error,
         step_size=jnp.exp(log_step),
         t=carry.t + 1,

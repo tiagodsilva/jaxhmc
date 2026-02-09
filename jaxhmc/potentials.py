@@ -37,9 +37,10 @@ class GaussianMixturePotential(Potential):
         self.k = means.shape[0]
 
     def __call__(self, x: jax.Array) -> jax.Array:
-        potential = (x - self.means) ** 2 / self.sigma**2
+        potential = (x[:2] - self.means) ** 2 / self.sigma**2
         potential = jnp.sum(potential, axis=1)
         potential = jax.nn.logsumexp(-potential / 2, axis=0)
+        potential = potential - jnp.sum(x[2:] ** 2, axis=0)
         return -potential + jnp.log(self.k)
 
 

@@ -35,7 +35,7 @@ def run_hmc(
     end_time = time.monotonic_ns()
     print(f"HMC took {(end_time - start_time) / 1e6:.2f} ms")
 
-    samples_hmc = samples_hmc[burnin:]
+    samples_hmc = samples_hmc[burnin:, :, :2]
     samples_hmc = samples_hmc.reshape(-1, 2)
 
     return samples_hmc
@@ -66,7 +66,7 @@ def run_rw(
     end_time = time.monotonic_ns()
     print(f"Random Walk took {(end_time - start_time) / 1e6:.2f} ms")
 
-    samples_rw = samples_rw[burnin:]
+    samples_rw = samples_rw[burnin:, :, :2]
     samples_rw = samples_rw.reshape(-1, 2)
 
     return samples_rw
@@ -111,6 +111,8 @@ def run(
     plot_prop: float = 0.05,
     alpha: float = 0.6,
     seed: int = 42,
+    include_hmc: bool = True,
+    batch_size: int = 16,
 ):
     burnin = int(chain_length * burnin_prop)
     n_samples_to_plot = int((chain_length - burnin) * plot_prop)
@@ -118,10 +120,11 @@ def run(
     # Create config for HMC
     key = jax.random.key(seed)
     key, subkey = jax.random.split(key, 2)
-    initial_position = jax.random.uniform(subkey, (16, dim))
+    initial_position = jax.random.uniform(subkey, (batch_size, dim))
     dim = initial_position.shape[1]
 
-    samples_hmc = run_hmc(potential, initial_position, key, chain_length, burnin, dim)
+    if include_hmc:
+        samples_hmc = run_hmc(potential, initial_position, key, chain_length, burnin, dim)
     samples_rw = run_rw(potential, initial_position, key, chain_length, burnin, dim)
 
     xmin = samples_rw[:, 0].min()
@@ -132,21 +135,22 @@ def run(
     plt.figure(figsize=(18, 6))
 
     ax = plt.subplot(1, 3, 1)
-    # Plot samples for HMC
-    plot_samples_overlay(
-        potential=potential,
-        xmin=xmin,
-        xmax=xmax,
-        ymin=ymin,
-        ymax=ymax,
-        samples=samples_hmc,
-        n_samples_to_plot=n_samples_to_plot,
-        key=key,
-        ax=ax,
-        title="HMC Samples",
-        alpha=alpha,
-    )
-    plt.legend()
+    if include_hmc:
+        # Plot samples for HMC
+        plot_samples_overlay(
+            potential=potential,
+            xmin=xmin,
+            xmax=xmax,
+            ymin=ymin,
+            ymax=ymax,
+            samples=samples_hmc,
+            n_samples_to_plot=n_samples_to_plot,
+            key=key,
+            ax=ax,
+            title="HMC Samples",
+            alpha=alpha,
+        )
+        plt.legend()
 
     ax = plt.subplot(1, 3, 2)
     # Plot samples for Random Walk

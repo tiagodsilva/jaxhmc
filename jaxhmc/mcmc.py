@@ -249,7 +249,7 @@ def hmc_tune(
 def init_states(config: HMCConfig, q: jax.Array, precm: jax.Array):
     nesterov_state = NesterovState(
         step_size=config.initial_step_size,
-        running_avg=jnp.log(config.initial_step_size),
+        log_running_avg=jnp.log(config.initial_step_size),
     )
     nesterov_config = NesterovConfig(
         mu=jnp.log(10 * config.initial_step_size),
@@ -267,7 +267,7 @@ def init_states(config: HMCConfig, q: jax.Array, precm: jax.Array):
     return nesterov_state, nesterov_config, welford_state
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=("potential",))
 def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     pot_grad_vmap = jax.vmap(jax.grad(potential), in_axes=0)
     pot_vmap = jax.vmap(potential, in_axes=0)
@@ -283,7 +283,7 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     steps = jnp.floor(config.max_path_len / config.initial_step_size).astype(jnp.int32)
 
     nesterov_state = nesterov_state.replace(
-        step_size=jnp.exp(nesterov_state.running_avg),
+        step_size=jnp.exp(nesterov_state.log_running_avg),
     )
 
     q, key, nesterov_state, precm, precm_L = hmc_tune(
@@ -367,9 +367,12 @@ def random_walk_step(
     return (new_position, key, nesterov_state), new_position
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=("potential",))
 def random_walk(potential: Potential, initial_position: jax.Array, config: RandomWalkConfig):
-    nesterov_state = NesterovState(step_size=config.initial_step_size)
+    nesterov_state = NesterovState(
+        step_size=config.initial_step_size,
+        log_running_avg=jnp.log(config.initial_step_size),
+    )
     nesterov_config = NesterovConfig(
         mu=jnp.log(10 * config.initial_step_size),
     )
@@ -392,7 +395,7 @@ def random_walk(potential: Potential, initial_position: jax.Array, config: Rando
     )
 
     nesterov_state = nesterov_state.replace(
-        step_size=jnp.exp(nesterov_state.running_avg),
+        step_size=jnp.exp(nesterov_state.log_running_avg),
     )
 
     # Second step: Sampling.
