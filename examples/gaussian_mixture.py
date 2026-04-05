@@ -18,12 +18,12 @@ means = jnp.vstack(
     ],
 )
 
-potential = GaussianMixturePotential(means=means, sigma=0.01)
+potential = GaussianMixturePotential(means=means, sigma=0.25)
 run(
     potential,
     dim=real_dim + fictious_dim,
     chain_length=100_000,
-    include_hmc=False,
+    include_hmc=True,
 )
 
 plt.savefig("examples/gaussian_mixture_samples.png")
