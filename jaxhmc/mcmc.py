@@ -15,7 +15,9 @@ from jaxhmc.tuning import (
 )
 
 
-def sample_gaussian_from_precision(batch_size: int, dim: int, precm_L: jax.Array, key: jax.Array):
+def sample_gaussian_from_precision(
+    batch_size: int, dim: int, precm_L: jax.Array, key: jax.Array
+):
     # Then we sample from a standard normal distribution and transform it
     key, subkey = jax.random.split(key, 2)
     z = jax.random.normal(subkey, shape=(batch_size, dim))
@@ -28,7 +30,9 @@ def sample_gaussian_from_precision(batch_size: int, dim: int, precm_L: jax.Array
 
 @struct.dataclass
 class HMCConfig:
-    initial_step_size: float = struct.field(pytree_node=False)  # We update with dual averaging
+    initial_step_size: float = struct.field(
+        pytree_node=False
+    )  # We update with dual averaging
     max_path_len: int = struct.field(pytree_node=False)  # We use jittering
 
     iterations: int = struct.field(pytree_node=False)
@@ -38,7 +42,12 @@ class HMCConfig:
 
     fast_tuning_steps: int = struct.field(pytree_node=False, default=125)
     slow_tuning_phases: int = struct.field(pytree_node=False, default=8)
-    slow_tuning_initial_length: int = struct.field(pytree_node=False, default=50)
+    slow_tuning_initial_length: int = struct.field(
+        pytree_node=False, default=50
+    )
+
+    should_tune: bool = struct.field(pytree_node=False, default=True)
+    return_alphas: bool = struct.field(pytree_node=False, default=False)
 
 
 def hmc_step(
@@ -76,7 +85,9 @@ def hmc_step(
 
     # Compute the Hamiltonian
     def hamiltonian(p_st, q_st):
-        return pot_vmap(q_st) + 0.5 * jnp.einsum("bi, ij, bj->b", p_st, precm, p_st)
+        return pot_vmap(q_st) + 0.5 * jnp.einsum(
+            "bi, ij, bj->b", p_st, precm, p_st
+        )
 
     H = hamiltonian(p, q)
     H_new = hamiltonian(p_new, q_new)
@@ -103,7 +114,11 @@ def hmc_step(
     if momentum_tuning:
         welford_state = welford_step(welford_state, q_next)
 
-    return (q_next, key, nesterov_state, welford_state), (p_next, q_next)
+    return (q_next, key, nesterov_state, welford_state), (
+        p_next,
+        q_next,
+        alpha,
+    )
 
 
 def hmc_scan_step(
@@ -275,37 +290,54 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
     # We first compute the Cholesky decomposition of the precision matrix
     precm_L = jnp.linalg.cholesky(config.initial_precm)
 
-    nesterov_state, nesterov_config, welford_state = init_states(config, initial_position, config.initial_precm)
+    nesterov_state, nesterov_config, welford_state = init_states(
+        config, initial_position, config.initial_precm
+    )
 
     # First step: Tuning.
     # We put a large limit to the number of steps, and mask indices exceeding the dynamic step size.
-    max_steps = jnp.floor(config.max_path_len / jnp.exp(nesterov_config.log_min_step_size)).astype(jnp.int32)
-    steps = jnp.floor(config.max_path_len / config.initial_step_size).astype(jnp.int32)
+    max_steps = jnp.floor(
+        config.max_path_len / jnp.exp(nesterov_config.log_min_step_size)
+    ).astype(jnp.int32)
+    steps = jnp.floor(config.max_path_len / config.initial_step_size).astype(
+        jnp.int32
+    )
 
     nesterov_state = nesterov_state.replace(
         step_size=jnp.exp(nesterov_state.log_running_avg),
     )
 
-    q, key, nesterov_state, precm, precm_L = hmc_tune(
-        pot_vmap=pot_vmap,
-        pot_grad_vmap=pot_grad_vmap,
-        steps=steps,
-        precm=config.initial_precm,
-        precm_L=precm_L,
-        max_steps=max_steps,
-        initial_position=initial_position,
-        nesterov_state=nesterov_state,
-        nesterov_config=nesterov_config,
-        welford_state=welford_state,
-        config=config,
-    )
+    if config.should_tune:
+        q, key, nesterov_state, precm, precm_L = hmc_tune(
+            pot_vmap=pot_vmap,
+            pot_grad_vmap=pot_grad_vmap,
+            steps=steps,
+            precm=config.initial_precm,
+            precm_L=precm_L,
+            max_steps=max_steps,
+            initial_position=initial_position,
+            nesterov_state=nesterov_state,
+            nesterov_config=nesterov_config,
+            welford_state=welford_state,
+            config=config,
+        )
+    else:
+        q, key, nesterov_state, precm, precm_L = (
+            initial_position,
+            config.key,
+            nesterov_state,
+            config.initial_precm,
+            precm_L,
+        )
 
     # Second step: Sampling.
     # We fix the step size with the value encountered above.
 
-    steps = jnp.floor(config.max_path_len / nesterov_state.step_size).astype(int)
+    steps = jnp.floor(config.max_path_len / nesterov_state.step_size).astype(
+        int
+    )
 
-    _, (p, q) = run_hmc_chain(
+    _, (p, q, alpha) = run_hmc_chain(
         pot_vmap=pot_vmap,
         pot_grad_vmap=pot_grad_vmap,
         precm=precm,
@@ -321,6 +353,9 @@ def hmc(potential: Potential, initial_position: jax.Array, config: HMCConfig):
         step_size_tuning=False,
         momentum_tuning=False,
     )
+
+    if config.return_alphas:
+        return p, q, alpha
 
     return p, q
 
@@ -350,7 +385,9 @@ def random_walk_step(
     new_position = position + nesterov_state.step_size * noise
 
     # Since it is symmetric, the MH probability is the ratio of the potential energies
-    alpha = jnp.minimum(1.0, jnp.exp(pot_vmap(position) - pot_vmap(new_position)))
+    alpha = jnp.minimum(
+        1.0, jnp.exp(pot_vmap(position) - pot_vmap(new_position))
+    )
     key, subkey = jax.random.split(key, 2)
     b = jax.random.bernoulli(subkey, p=alpha, shape=(batch_size,))[..., None]
 
@@ -368,7 +405,9 @@ def random_walk_step(
 
 
 @partial(jax.jit, static_argnames=("potential",))
-def random_walk(potential: Potential, initial_position: jax.Array, config: RandomWalkConfig):
+def random_walk(
+    potential: Potential, initial_position: jax.Array, config: RandomWalkConfig
+):
     nesterov_state = NesterovState(
         step_size=config.initial_step_size,
         log_running_avg=jnp.log(config.initial_step_size),
