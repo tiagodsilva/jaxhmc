@@ -6,6 +6,6 @@ A simple implementation of Hamiltonian Monte Carlo (HMC) using JAX.
 
 See [examples/gaussian_mixture.py](./examples/gaussian_mixture.py).
 
-Effect of leapfrog configuration on the HMC sampler: 
-
 ![Effect of step size on HMC](./examples/step_size_analysis.png)
+
+See [examples/step_size_analysis.py](./examples/step_size_analysis.png) for the effect of the leapfrog integrator on the HMC sampler.
