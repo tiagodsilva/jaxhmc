@@ -30,9 +30,7 @@ def sample_gaussian_from_precision(
 
 @struct.dataclass
 class HMCConfig:
-    initial_step_size: float = struct.field(
-        pytree_node=False
-    )  # We update with dual averaging
+    initial_step_size: jax.Array
     max_path_len: int = struct.field(pytree_node=False)  # We use jittering
 
     iterations: int = struct.field(pytree_node=False)
